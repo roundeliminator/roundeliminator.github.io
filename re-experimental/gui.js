@@ -12,6 +12,19 @@ function handle_result(x, onresult, onerror, progress) {
         fix_problem(p);
         onresult(p);
     }
+    if( x.AutoUb != null ){
+        for( let step of x.AutoUb[1] ){
+            fix_problem(step[1]);
+        }
+        onresult(x.AutoUb)
+    }
+    if( x.AutoLb != null ){
+        for( let step of x.AutoLb[1] ){
+            fix_problem(step[1]);
+        }
+        onresult(x.AutoLb)
+    }
+
     if( x.Event != null ){
         progress.type = x.Event[0];
         if(x.Event.length > 1) {
@@ -121,6 +134,16 @@ function rename(problem, renaming, onresult, onerror, progress){
     return api.request({ Rename : [problem,renaming] }, ondata , function(){});
 }
 
+function autoub(problem, max_labels, branching, max_steps, allow_discard_old, onresult, onerror, progress, oncomplete){
+    let ondata = x => handle_result(x, onresult, onerror, progress);
+    return api.request({ AutoUb : [problem, parseInt(max_labels), parseInt(branching), parseInt(max_steps), allow_discard_old] }, ondata, oncomplete);
+}
+
+function autoautoub(problem, allow_discard_old, onresult, onerror, progress, oncomplete){
+    let ondata = x => handle_result(x, onresult, onerror, progress);
+    return api.request({ AutoAutoUb : [problem, allow_discard_old] }, ondata, oncomplete);
+}
+
 function fix_problem(p) {
     p.map_label_text = vec_to_map(p.mapping_label_text);
     p.map_label_oldlabels = vec_to_map(p.mapping_label_oldlabels) ?? null;
@@ -151,26 +174,62 @@ function fix_problem(p) {
 
 
 
-function on_new_problem(stuff, action, progress, p){
+function on_new_what(stuff, action, progress, p, what, removeprogress = true){
     let idx = stuff.indexOf(progress);
-    stuff.splice(idx,1);
-    stuff.push({ type : "performed", data: action })
-    stuff.push({ type : "problem", data : p });
+    if( removeprogress ){
+        stuff.splice(idx,1);
+    }
+    if( what == "problem" ){
+        stuff.push({ type : "performed", data: action });
+        stuff.push({ type : "problem", data : p });
+    }else if( what == "sequence" ){
+        let len = p[0];
+        let sequence = p[1];
+        let substuff = [];
+        action.len = len;
+        substuff.push({ type : "performed", data: action });
+        for( var step of sequence ){
+            let operation = step[0];
+            if( operation == "Initial" ){
+                substuff.push({ type : "performed", data: {type:"initial"} });
+            } else if( operation == "Speedup" ){
+                substuff.push({ type : "performed", data: {type:"speedup"} });
+            } else if( operation.Harden != null) {
+                substuff.push({ type : "performed", data: {type:"hardenkeep", labels:operation.Harden.map(x => step[1].map_label_text[x])} });
+            }
+            substuff.push({ type : "problem", data : step[1] });
+        }
+        stuff.push({ type : "sub", data : substuff });
+    }
 }
 
 
-function call_api_generating_problem(stuff, action, f, params) {
+function call_api_generating_problem(stuff, action, f, params, removeprogress = true) {
+    return call_api_generating_what(stuff, action, f, params, "problem", removeprogress);
+}
+
+function call_api_generating_sequence(stuff, action, f, params, removeprogress = true) {
+    return call_api_generating_what(stuff, action, f, params, "sequence", removeprogress);
+}
+
+
+function call_api_generating_what(stuff, action, f, params, what, removeprogress = true) {
     let progress = { type : "computing", data: {type : "empty", cur : 1, max : 1, onstop : function(){}} };
     stuff.push(progress);
     let remove_progress_bar = function() {
-        //console.log("removing progress bar");
+        console.log("removing progress bar");
         let idx = stuff.indexOf(progress);
-        stuff.splice(idx,1);
+        if(idx != -1)stuff.splice(idx,1);
     }
-    let termination_handle = f(...params, p => on_new_problem(stuff, action, progress, p),e =>  { remove_progress_bar() ; stuff.push({ type : "error", data : e });} ,progress.data);
+    let termination_handle = removeprogress?
+        f(...params, p => on_new_what(stuff, action, progress, p, what, removeprogress),e =>  { remove_progress_bar() ; stuff.push({ type : "error", data : e });} ,progress.data) :
+        f(...params, p => on_new_what(stuff, action, progress, p, what, removeprogress),e =>  { remove_progress_bar() ; stuff.push({ type : "error", data : e });} ,progress.data, function(){
+            remove_progress_bar();
+        });
+
     progress.data.onstop = function() {
         remove_progress_bar();
-        //console.log("killing worker");
+        console.log("killing worker");
         termination_handle();
     }
 }
@@ -228,15 +287,15 @@ Vue.component('re-performed-action', {
                 case "speedup":
                     return "Performed speedup";
                 case "fixpoint-basic":
-                    return "Generated Fixed Point (with default diagram)";
+                    return "Generated Fixed Point with Default Diagram.";
                 case "fixpoint-gendefault":
                     return "Generated Default Diagram";
                 case "fixpoint-loop":
-                    return "Generated Fixed Point (with automatic diagram fixing)";
+                    return "Generated Fixed Point with Automatic Diagram Fixing.";
                 case "fixpoint-custom":
-                    return "Generated Fixed Point (with custom diagram)";
+                    return "Generated Fixed Point with Custom Diagram:\n" + this.action.diagram;
                 case "fixpoint-dup":
-                    return "Generated Fixed Point (with label duplication)";
+                    return "Generated Fixed Point With Label Duplication: "+ this.action.dups;
                 case "inversespeedup":
                     return "Performed inverse speedup";
                 case "speedupmaximize":
@@ -249,6 +308,10 @@ Vue.component('re-performed-action', {
                     return "Renamed by generators";
                 case "rename":
                     return "Renamed";
+                case "autoub":
+                    return "Automatic Upper Bound (max labels: "+ this.action.max_labels + ", branching: "+ this.action.branching + ", max steps: " + this.action.max_steps + "). Obtained Upper Bound of " + this.action.len + " Rounds.";
+                case "autoautoub":
+                    return "Automatic Upper Bound with Automatic Parameters. Obtained Upper Bound of " + this.action.len + " Rounds.";
                 default:
                     return "Unknown " + this.action.type
             }
@@ -256,9 +319,7 @@ Vue.component('re-performed-action', {
     },
     template: `
         <div class="card bg-primary text-white m-2 p-2" :id="'current'+this._uid">
-            <span>
-                {{ actionview }}
-                <button type="button" class="close" aria-label="Close" v-on:click="on_close">
+            <span style="white-space: break-spaces;">{{ actionview }}<button type="button" class="close" aria-label="Close" v-on:click="on_close">
                     <span aria-hidden="true">&times;</span>
                 </button>
             </span>
@@ -291,6 +352,8 @@ Vue.component('re-computing', {
     computed: {
         state: function() {
             switch( this.action.type ) {
+                case "autoub":
+                    return {bar : false, msg: "Computing an Upper Bound Automatically"}; 
                 case "coloring graph":
                     return {bar : true, msg: "Computing graph for determining coloring solvability", max : this.action.max, cur : this.action.cur };
                 case "clique":
@@ -972,7 +1035,7 @@ Vue.component('re-group-harden',{
 })
 
 Vue.component('re-auto-lb',{
-    props: ['problem'],
+    props: ['problem','stuff'],
     template: `
         <re-card title="Automatic Lower Bound" subtitle="" :id="'group'+this._uid">
         </re-card>
@@ -980,9 +1043,37 @@ Vue.component('re-auto-lb',{
 })
 
 Vue.component('re-auto-ub',{
-    props: ['problem'],
+    props: ['problem','stuff'],
+    data: function() {
+        return {
+            max_labels : this.problem.labels.length + 4,
+            branching : 4,
+            max_steps : 8,
+            allow_discard_old : false
+        }
+    },
+    methods: {
+        on_autoub() {
+            call_api_generating_sequence(this.stuff,{type:"autoub", max_labels : this.max_labels, branching : this.branching, max_steps : this.max_steps},autoub,[this.problem, this.max_labels, this.branching, this.max_steps, this.allow_discard_old], false);
+        },
+        on_autoautoub() {
+            call_api_generating_sequence(this.stuff,{type:"autoautoub"},autoautoub,[this.problem, this.allow_discard_old], false);
+        }
+    },
     template: `
         <re-card title="Automatic Upper Bound" subtitle="" :id="'group'+this._uid">
+            <div>Max Labels: <input class="form-control m-2" type="number" v-model="max_labels"></div>
+            <div>Branching: <input class="form-control m-2" type="number" v-model="branching"></div>
+            <div>Max Steps: <input class="form-control m-2" type="number" v-model="max_steps"></div>
+            <div class="custom-control custom-switch m-2">
+                <label><input type="checkbox" class="custom-control-input" v-model="allow_discard_old"><p class="form-control-static custom-control-label">Allow Discarding Old Labels</p></label>
+            </div>
+            <button type="button" class="btn btn-primary m-2" v-on:click="on_autoub">Automatic Upper Bound</button>
+            <hr/>
+            <div class="custom-control custom-switch m-2">
+                <label><input type="checkbox" class="custom-control-input" v-model="allow_discard_old"><p class="form-control-static custom-control-label">Allow Discarding Old Labels</p></label>
+            </div>
+            <button type="button" class="btn btn-primary m-2" v-on:click="on_autoautoub">Automatic Upper Bound with Automatic Parameters</button>
         </re-card>
     `
 })
@@ -1017,6 +1108,7 @@ Vue.component('re-tools', {
             <re-group-harden :problem="problem" :stuff="stuff"></re-group-harden>
             <re-rename :problem="problem" :stuff="stuff"></re-rename>
             <re-fixpoint :problem="problem" :stuff="stuff"></re-fixpoint>
+            <re-auto-ub :problem="problem" :stuff="stuff"></re-auto-ub>
         </div>
     `
 })
@@ -1236,7 +1328,7 @@ Vue.component('re-fixpoint-custom',{
     },
     methods: {
         on_fixpoint() {
-            call_api_generating_problem(this.stuff,{type:"fixpoint-custom"},fixpoint_custom,[this.problem, this.text]);
+            call_api_generating_problem(this.stuff,{type:"fixpoint-custom", diagram: this.text},fixpoint_custom,[this.problem, this.text]);
         }
     },
     template: `
@@ -1264,7 +1356,7 @@ Vue.component('re-fixpoint-dup',{
             }
         },
         on_fixpoint() {
-            call_api_generating_problem(this.stuff,{type:"fixpoint-dup"},fixpoint_dup,[this.problem, this.dups]);
+            call_api_generating_problem(this.stuff,{type:"fixpoint-dup", dups: "["+this.dups.map(x => "["+this.convert(x)+"]").join(",")+"]"},fixpoint_dup,[this.problem, this.dups]);
         },
         convert(x){
             return labelset_to_string(x,this.problem.fixpoint_diagram.map_label_text,", ")
@@ -1335,14 +1427,38 @@ Vue.component('re-export', {
 })
 
 Vue.component('re-stuff', {
-    props: ["stuff"],
+    props: ["stuff","handle","supstuff"],
+    methods: {
+        on_close() {
+            let idx = this.supstuff.indexOf(this.handle);
+            this.supstuff.splice(idx,1);
+        }
+    },
     template: `
         <div>
-            <div v-for="elem in this.stuff">
-                <re-performed-action :stuff="stuff" :action='elem.data' v-if='elem.type == "performed"'  :handle="elem"/></re-performed-action>
-                <re-computing :action='elem.data' v-if='elem.type == "computing"'  :handle="elem"/></re-computing>
-                <re-error :stuff="stuff" :error='elem.data' v-if='elem.type == "error"'  :handle="elem"/></re-computing>
-                <re-problem :problem='elem.data' :stuff='stuff' v-if='elem.type == "problem"' :handle="elem"></re-problem>
+            <div class="card bg-light pr-4 m-2" :id="'current'+this._uid" v-if="this.supstuff != null">
+                <button type="button" class="close position-absolute top-0 end-0 p-2" aria-label="Close" v-on:click="on_close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+                <div v-for="elem in this.stuff">
+                    <re-performed-action :stuff="stuff" :action='elem.data' v-if='elem.type == "performed"'  :handle="elem"/></re-performed-action>
+                    <re-computing :action='elem.data' v-if='elem.type == "computing"'  :handle="elem"/></re-computing>
+                    <re-error :stuff="stuff" :error='elem.data' v-if='elem.type == "error"'  :handle="elem"/></re-computing>
+                    <re-problem :problem='elem.data' :stuff='stuff' v-if='elem.type == "problem"' :handle="elem"></re-problem>
+                    <re-stuff :supstuff='stuff' :stuff='elem.data' v-if='elem.type == "sub"' :handle="elem"></re-stuff>
+                </div>
+            </div>
+            <div v-if="this.supstuff == null">
+                <button type="button" class="close position-absolute top-0 end-0 p-2" aria-label="Close" v-on:click="on_close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+                <div v-for="elem in this.stuff">
+                    <re-performed-action :stuff="stuff" :action='elem.data' v-if='elem.type == "performed"'  :handle="elem"/></re-performed-action>
+                    <re-computing :action='elem.data' v-if='elem.type == "computing"'  :handle="elem"/></re-computing>
+                    <re-error :stuff="stuff" :error='elem.data' v-if='elem.type == "error"'  :handle="elem"/></re-computing>
+                    <re-problem :problem='elem.data' :stuff='stuff' v-if='elem.type == "problem"' :handle="elem"></re-problem>
+                    <re-stuff :supstuff='stuff' :stuff='elem.data' v-if='elem.type == "sub"' :handle="elem"></re-stuff>
+                </div>
             </div>
         </div>
     `
