@@ -12,6 +12,9 @@ function handle_result(x, onresult, onerror, progress) {
         fix_problem(p);
         onresult(p);
     }
+    if( x.W != null ){
+        onerror(x.W,true);
+    }
     if( x.AutoUb != null ){
         for( let step of x.AutoUb[1] ){
             fix_problem(step[1]);
@@ -49,6 +52,16 @@ function demisifiable(problem, onresult, onerror, progress){
     return api.request({ Demisifiable : problem }, ondata , function(){});
 }
 
+function add_active_predecessors(problem, onresult, onerror, progress){
+    let ondata = x => handle_result(x, onresult, onerror, progress);
+    return api.request({ AddActivePredecessors : problem }, ondata , function(){});
+}
+
+function remove_trivial_lines(problem, onresult, onerror, progress){
+    let ondata = x => handle_result(x, onresult, onerror, progress);
+    return api.request({ RemoveTrivialLines : problem }, ondata , function(){});
+}
+
 function fixpoint_gendefault(problem, partial, triviality_only, sublabels, onresult, onerror, progress){
     let ondata = x => handle_result(x, onresult, onerror, progress);
     return api.request({ DefaultDiagram : [problem,partial,triviality_only,sublabels] }, ondata , function(){});
@@ -84,6 +97,11 @@ function inverse_speedup(problem, onresult, onerror, progress){
     return api.request({ InverseSpeedup : problem }, ondata , function(){});
 }
 
+function all_different_labels(problem, onresult, onerror, progress){
+    let ondata = x => handle_result(x, onresult, onerror, progress);
+    return api.request({ AllDifferentLabels : problem }, ondata , function(){});
+}
+
 function delta_edge_coloring(problem, onresult, onerror, progress){
     let ondata = x => handle_result(x, onresult, onerror, progress);
     return api.request({ DeltaEdgeColoring : problem }, ondata , function(){});
@@ -114,9 +132,9 @@ function simplify_merge(problem, from, to, onresult, onerror, progress){
     return api.request({ SimplifyMerge : [problem, parseInt(from), parseInt(to)] }, ondata , function(){});
 }
 
-function simplify_merge_sd(problem, sd, onresult, onerror, progress){
+function simplify_merge_sd(problem, sd, recompute_diagram, onresult, onerror, progress){
     let ondata = x => handle_result(x, onresult, onerror, progress);
-    return api.request({ SimplifySD : [problem, sd] }, ondata , function(){});
+    return api.request({ SimplifySD : [problem, sd, recompute_diagram] }, ondata , function(){});
 }
 
 function simplify_group(problem, labels, to, onresult, onerror, progress){
@@ -185,6 +203,10 @@ function autolb(problem, b_max_labels, max_labels, b_branching, branching, b_max
     return api.request({ AutoLb : [problem, b_max_labels, parseInt(max_labels), b_branching, parseInt(branching),  b_max_steps, parseInt(max_steps), coloring_given, parseInt(coloring), coloring_given_passive, parseInt(coloring_passive)] }, ondata, oncomplete);
 }
 
+function check_zero_with_input(problem, active, passive, onresult, onerror, progress){
+    let ondata = x => handle_result(x, onresult, onerror, progress);
+    return api.request({ CheckZeroWithInput : [problem, active, passive] }, ondata , function(){});
+}
 
 
 function fix_problem(p) {
@@ -220,7 +242,17 @@ function fix_problem(p) {
     let marks_works = (problem.marks_works != null && problem.marks_works);
     let marks_does_not_work = (problem.marks_works != null && !problem.marks_works);
 
-    p.info = { orientation_coloringsets:orientation_coloringsets, orientation_numcolors:orientation_numcolors, orientation_zerosets:orientation_zerosets,orientation_is_zero:orientation_is_zero, orientation_is_nonzero:orientation_is_nonzero, numlabels : numlabels, is_zero : is_zero, is_nonzero : is_nonzero, numcolors : numcolors, zerosets : zerosets, coloringsets : coloringsets, is_mergeable : is_mergeable, mergesets : mergesets, is_demisifiable : is_demisifiable, demisifiable : demisifiable, fp_procedure_works : fp_procedure_works, fp_procedure_does_not_work : fp_procedure_does_not_work, marks_works : marks_works, marks_does_not_work : marks_does_not_work };
+    let zero_with_input =  (problem.is_trivial_with_input != null && problem.is_trivial_with_input);
+    let non_zero_with_input = (problem.is_trivial_with_input != null && !problem.is_trivial_with_input);
+
+    let triviality_with_input = null;
+    if( zero_with_input ){
+        let input_to_string = vec_to_map(problem.triviality_with_input[0]);
+        let output_to_string = p.map_label_text;
+        let mapping = problem.triviality_with_input[1];
+        triviality_with_input = mapping.map(x => [labelset_to_string([x[0]],input_to_string),  labelset_to_string(x[1],output_to_string)]);
+    }
+    p.info = { orientation_coloringsets:orientation_coloringsets, orientation_numcolors:orientation_numcolors, orientation_zerosets:orientation_zerosets,orientation_is_zero:orientation_is_zero, orientation_is_nonzero:orientation_is_nonzero, numlabels : numlabels, is_zero : is_zero, is_nonzero : is_nonzero, numcolors : numcolors, zerosets : zerosets, coloringsets : coloringsets, is_mergeable : is_mergeable, mergesets : mergesets, is_demisifiable : is_demisifiable, demisifiable : demisifiable, fp_procedure_works : fp_procedure_works, fp_procedure_does_not_work : fp_procedure_does_not_work, marks_works : marks_works, marks_does_not_work : marks_does_not_work, zero_with_input:zero_with_input, non_zero_with_input: non_zero_with_input, triviality_with_input : triviality_with_input};
 }
 
 
@@ -280,8 +312,8 @@ function call_api_generating_what(stuff, action, f, params, what, removeprogress
         if(idx != -1)stuff.splice(idx,1);
     }
     let termination_handle = removeprogress?
-        f(...params, p => on_new_what(stuff, action, progress, p, what, removeprogress),e =>  { remove_progress_bar() ; stuff.push({ type : "error", data : e });} ,progress.data) :
-        f(...params, p => on_new_what(stuff, action, progress, p, what, removeprogress),e =>  { remove_progress_bar() ; stuff.push({ type : "error", data : e });} ,progress.data, function(){
+        f(...params, p => on_new_what(stuff, action, progress, p, what, removeprogress),(e,warning=false) =>  { if(!warning)remove_progress_bar() ; stuff.push({ type : "error", data : e, warning });} ,progress.data) :
+        f(...params, p => on_new_what(stuff, action, progress, p, what, removeprogress),(e,warning=false) =>  { if(!warning)remove_progress_bar() ; stuff.push({ type : "error", data : e, warning });} ,progress.data, function(){
             remove_progress_bar();
         });
 
@@ -340,6 +372,8 @@ Vue.component('re-performed-action', {
                     return "Performed Simplification: Merged Set " + this.action.labels.join("") + "→" + this.action.to;
                 case "simplifymergesd":
                     return "Performed SubDiagram Merging\n" + this.action.sd;
+                case "zerowithinput":
+                    return "Checked whether the problem is zero-round solvable with the following input:\n\n"+this.action.active+"\n\n" + this.action.passive;
                 case "hardenremove":
                     return "Performed Hardening: Removed Label " + this.action.label;
                 case "criticalharden":
@@ -352,6 +386,10 @@ Vue.component('re-performed-action', {
                     return "Performed speedup";
                 case "demisifiable":
                     return "Computed deMISifiable sets.";
+                case "add-active-predecessors":
+                    return "Added Predecessors On Active Side.";
+                case "remove-trivial-lines":
+                    return "Removed Trivial Lines.";
                 case "fixpoint-basic":
                     return "Generated Fixed Point with Default Diagram" + (this.action.sub !== null ? " for labels " + this.action.sub : "");
                 case "fixpoint-gendefault":
@@ -364,6 +402,8 @@ Vue.component('re-performed-action', {
                     return "Generated Fixed Point With Label Duplication" + (this.action.sub !== null ? " for labels " + this.action.sub : "") + ": "+ this.action.dups;
                 case "inversespeedup":
                     return "Performed inverse speedup";
+                case "alldifferentlabels":
+                    return "Made All Labels Different";
                 case "deltaedgecoloring":
                     return "Transformed Labels Assuming a Delta Edge Coloring";
                 case "coloring":
@@ -397,16 +437,15 @@ Vue.component('re-performed-action', {
     },
     template: `
         <div class="card bg-primary text-white m-2 p-2">
-            <span style="white-space: break-spaces;">{{ actionview }}<button type="button" class="close" aria-label="Close" v-on:click="on_close">
+            <div class="position-absolute top-0 end-0 m-1 p-1"><button type="button" class="close" aria-label="Close" v-on:click="on_close">
                     <span aria-hidden="true">&times;</span>
-                </button>
-            </span>
+            </button></div><span style="white-space: break-spaces;">{{ actionview }}</span>
         </div>
     `
 })
 
 Vue.component('re-error', {
-    props: ['error','handle','stuff'],
+    props: ['error','warning','handle','stuff'],
     methods: {
         on_close() {
             let idx = this.stuff.indexOf(this.handle);
@@ -414,7 +453,7 @@ Vue.component('re-error', {
         }
     },
     template: `
-        <div class="card bg-danger text-white m-2 p-2">
+        <div class="card m-2 p-2" :class="this.warning? 'bg-warning text-black' : 'bg-danger text-white'">
             <span>
                 {{ this.error }}
                 <button type="button" class="close" aria-label="Close" v-on:click="on_close">
@@ -604,6 +643,19 @@ Vue.component('re-problem-info', {
                     <div>Marks' technique does not give a lower bound.</div>
                 </div>
             </div>
+            <div v-if="this.problem.info.zero_with_input" class="col-auto m-2 p-0">
+                <div class="card card-body m-0 p-2">
+                    <div>The problem IS zero-round solvable with the given input.</div>
+                    <div>There exists the following mapping:
+                        <div v-for="pair in this.problem.info.triviality_with_input">{{ pair[0] }} → {{ pair[1] }}</div>
+                    </div>
+                </div>
+            </div>
+            <div v-if="this.problem.info.non_zero_with_input" class="col-auto m-2 p-0">
+                <div class="card card-body m-0 p-2">
+                    <div>The problem is NOT zero-round solvable with the given input.</div>
+                </div>
+            </div>
         </div>
     `
 })
@@ -757,6 +809,7 @@ Vue.component('re-diagram', {
     props: ["problem"],
     data : function() {
         return {
+            hierarchical : false,
             physics : true,
             network : [null]
         }
@@ -787,7 +840,10 @@ Vue.component('re-diagram', {
                     multiselect : true
                 },
                 physics:{
-                    enabled: this.physics
+                    enabled: this.physics,
+                    hierarchicalRepulsion: {
+                        nodeDistance: 200,
+                    }
                 },
                 nodes: {
                     color:{
@@ -801,6 +857,13 @@ Vue.component('re-diagram', {
                         highlight: '#FF7f7f'
                     }
                 },
+                layout: {
+                    hierarchical: this.hierarchical ? {
+                      direction: 'LR',
+                      sortMethod: 'directed',
+                      levelSeparation: 200,
+                    } : false
+                }
             };
         }
     },
@@ -816,6 +879,15 @@ Vue.component('re-diagram', {
         network.on("selectEdge", function() {
             p.selectedEdges = network.getSelectedEdges().map(x => network.getConnectedNodes(x));
         });
+
+        /*network.on("stabilized", function () {
+            this.options.layout = {"hierarchical": {"enabled": false}};
+            network.setOptions({
+                "layout": {"hierarchical": {"enabled": false}},                  
+            });
+        });*/
+         
+
         //prevent vue from adding getters and setters, otherwise some things of vis break
         this.network[0] = network;
         //console.log(this.id + " " + this.visdata.nodes.length);
@@ -823,6 +895,11 @@ Vue.component('re-diagram', {
     },
     watch : {
         'physics' : function() {
+            if(this.network[0] != null){
+                this.network[0].setOptions(this.options);
+            }
+        },
+        'hierarchical' : function() {
             if(this.network[0] != null){
                 this.network[0].setOptions(this.options);
             }
@@ -840,7 +917,8 @@ Vue.component('re-diagram', {
             <div class="panel-resizable" style="width: 300px; height: 300px;" :id="'diagram'+this._uid">
             </div>
             <div class="custom-control custom-switch m-2">
-                <label><input type="checkbox" class="custom-control-input" v-model="physics"><p class="form-control-static custom-control-label">Physics</p></label>
+                <label><input type="checkbox" class="custom-control-input" v-model="physics"><p class="form-control-static custom-control-label">Physics</p></label><br/>
+                <label><input type="checkbox" class="custom-control-input" v-model="hierarchical"><p class="form-control-static custom-control-label">Hierarchical</p></label>
             </div>
         </div>
     `
@@ -890,6 +968,29 @@ Vue.component('re-demisifiable',{
     `
 })
 
+Vue.component('re-add-active-predecessors',{
+    props: ['problem','stuff'],
+    methods: {
+        on_button() {
+            call_api_generating_problem(this.stuff,{type:"add-active-predecessors"},add_active_predecessors,[this.problem]);
+        }
+    },
+    template: `
+        <button type="button" class="btn btn-primary m-1" v-on:click="on_button">Add Active Predecessors</button>
+    `
+})
+
+Vue.component('re-remove-trivial-lines',{
+    props: ['problem','stuff'],
+    methods: {
+        on_button() {
+            call_api_generating_problem(this.stuff,{type:"remove-trivial-lines"},remove_trivial_lines,[this.problem]);
+        }
+    },
+    template: `
+        <button type="button" class="btn btn-primary m-1" v-on:click="on_button">Remove Trivial Lines</button>
+    `
+})
 
 
 Vue.component('re-inverse-speedup',{
@@ -901,6 +1002,18 @@ Vue.component('re-inverse-speedup',{
     },
     template: `
         <button type="button" class="btn btn-primary m-1" v-on:click="on_speedup">Inverse Speedup</button>
+    `
+})
+
+Vue.component('re-all-different-labels',{
+    props: ['problem','stuff'],
+    methods: {
+        on_click() {
+            call_api_generating_problem(this.stuff,{type:"alldifferentlabels"},all_different_labels,[this.problem]);
+        }
+    },
+    template: `
+        <button type="button" class="btn btn-primary m-1" v-on:click="on_click">All Different Labels</button>
     `
 })
 
@@ -1002,6 +1115,14 @@ Vue.component('re-rename',{
     methods: {
         on_rename() {
             call_api_generating_problem(this.stuff,{type:"rename"},rename,[this.problem,this.table.map(x => [x[0],x[3]])]);
+        },
+        on_removegen() {
+            for(let i=0;i<this.table.length;i++){
+                if( this.table[i][3][0] == "<" && this.table[i][3][this.table[i][3].length-1] == ">" ) {
+                    this.table[i][3] = this.table[i][3].substring(1,this.table[i][3].length-1);
+                }
+            }
+            this.$forceUpdate();
         }
     },
     template: `
@@ -1014,6 +1135,7 @@ Vue.component('re-rename',{
             </tr>
         </table>
         <button type="button" class="btn btn-primary m-1" v-on:click="on_rename">Rename</button>
+        <button type="button" class="btn btn-primary m-1" v-on:click="on_removegen">Remove &lt; &gt;</button>
     </re-card>
     `
 })
@@ -1266,6 +1388,7 @@ Vue.component('re-sd-simplify',{
     props: ['problem','stuff'],
     data: function(){ return {
             text : "",
+            recompute_diagram : true
         }    
     },
     methods: {
@@ -1273,7 +1396,7 @@ Vue.component('re-sd-simplify',{
             call_api_generating_problem(
                 this.stuff,
                 {type:"simplifymergesd", sd:this.text},
-                simplify_merge_sd,[this.problem, this.text]
+                simplify_merge_sd,[this.problem, this.text,this.recompute_diagram]
             );
         },
         on_magic(){
@@ -1296,6 +1419,9 @@ m A B`;
         <re-card title="SubDiagram Merge" subtitle="(... still need a good description ...)">
             <button type="button" class="btn btn-primary ml-1" v-on:click="on_magic"></button>
             <textarea rows="4" cols="30" class="form-control m-1" v-model="text"></textarea>
+            <div class="custom-control custom-switch m-2">
+                <label><input type="checkbox" class="custom-control-input" v-model="recompute_diagram"><p class="form-control-static custom-control-label">Always Recompute Full Diagram</p></label>
+            </div>
             <button type="button" class="btn btn-primary ml-1" v-on:click="on_sd">Merge</button>
         </re-card>
     `
@@ -1508,6 +1634,7 @@ Vue.component('re-operations',{
             <div class="m-2" v-if="this.problem.info.is_mergeable"><re-merge :problem="problem" :stuff="stuff"></re-merge>merge equivalent labels</div>
             <div class="m-2"><re-edit :problem="problem" :stuff="stuff"></re-edit>copy problem up</div>
             <div class="m-2"><re-inverse-speedup :problem="problem" :stuff="stuff"></re-inverse-speedup> apply inverse round elimination</div>
+            <div class="m-2"><re-all-different-labels :problem="problem" :stuff="stuff"></re-all-different-labels> make each label different</div>
             <div class="m-2"><re-delta-edge-coloring :problem="problem" :stuff="stuff"></re-delta-edge-coloring> transform labels assuming a delta edge coloring</div>
             <div class="m-2" v-if="this.problem.mapping_label_oldlabels != null"><re-rename-generators :problem="problem" :stuff="stuff"></re-rename-generators>rename by using diagram generators</div>
             <div class="m-2"><re-speedup-maximize :problem="problem" :stuff="stuff"></re-speedup-maximize><re-speedup-maximize-rename :problem="problem" :stuff="stuff"></re-speedup-maximize-rename></div>
@@ -1515,6 +1642,8 @@ Vue.component('re-operations',{
             <div class="m-2" v-if="this.problem.info.numcolors == -1"><re-coloring :problem="problem" :stuff="stuff"></re-coloring> compute hypergraph strong coloring solvability</div>
             <div class="m-2"><re-marks :problem="problem" :stuff="stuff"></re-marks> apply Marks' technique</div>
             <div class="m-2"><re-demisifiable :problem="problem" :stuff="stuff"></re-demisifiable> compute reversible merges</div>
+            <div class="m-2"><re-add-active-predecessors :problem="problem" :stuff="stuff"></re-add-active-predecessors> ...</div>
+            <div class="m-2"><re-remove-trivial-lines :problem="problem" :stuff="stuff"></re-remove-trivial-lines> ...</div>
         </re-card>
     `
 })
@@ -1537,6 +1666,7 @@ Vue.component('re-tools', {
             <re-critical :problem="problem" :stuff="stuff"></re-critical>
             <re-auto-lb :problem="problem" :stuff="stuff"></re-auto-lb>
             <re-auto-ub :problem="problem" :stuff="stuff"></re-auto-ub>
+            <re-zero-input :problem="problem" :stuff="stuff"></re-zero-input>
         </div>
     `
 })
@@ -1684,11 +1814,11 @@ Vue.component('re-begin', {
         <div class="row">
             <div class="col-md">
                 <h4>Active</h4>
-                <textarea rows="4" cols="30" class="form-control" v-model="active"></textarea>
+                <textarea rows="4" cols="30" class="form-control" style="resize: both" v-model="active"></textarea>
             </div>
             <div class="col-md">
                 <h4>Passive</h4>
-                <textarea rows="4" cols="30" class="form-control" v-model="passive"></textarea>
+                <textarea rows="4" cols="30" class="form-control" style="resize: both" v-model="passive"></textarea>
             </div>
             <div class="m-2 col-sm mt-auto text-right">
                 <button type="button" class="btn btn-primary" v-on:click="on_start">Start</button>
@@ -1917,6 +2047,38 @@ Vue.component('re-fixpoint-dup',{
     `
 })
 
+
+Vue.component('re-zero-input',{
+    props: ['problem','stuff'],
+    data: function(){ return {
+            active : "",
+            passive : ""
+        }    
+    },
+    methods: {
+        on_zero(){
+            call_api_generating_problem(
+                this.stuff,
+                {type:"zerowithinput", active:this.active,passive:this.passive},
+                check_zero_with_input,[this.problem, this.active,this.passive]
+            );
+        },
+    },
+    template: `
+        <re-card title="Zero-Round Solvability with Input" subtitle="(check if the given input makes the problem trivial)">
+            <div class="m-1">
+                <h4>Active</h4>
+                <textarea rows="4" cols="30" class="form-control" style="resize: both" v-model="active"></textarea>
+            </div>
+            <div class="m-1">
+                <h4>Passive</h4>
+                <textarea rows="4" cols="30" class="form-control" style="resize: both" v-model="passive"></textarea>
+            </div>
+            <button type="button" class="btn btn-primary ml-1" v-on:click="on_zero">Check</button>
+        </re-card>
+    `
+})
+
 // https://stackoverflow.com/questions/400212/how-do-i-copy-to-the-clipboard-in-javascript
 // navigator.clipboard.writeText(link); only works with HTTPS
 function copyToClipboard(text) {
@@ -2014,7 +2176,7 @@ Vue.component('re-stuff', {
                 <div v-for="elem in this.stuff">
                     <re-performed-action :stuff="stuff" :action='elem.data' v-if='elem.type == "performed"'  :handle="elem"/></re-performed-action>
                     <re-computing :action='elem.data' v-if='elem.type == "computing"'  :handle="elem"/></re-computing>
-                    <re-error :stuff="stuff" :error='elem.data' v-if='elem.type == "error"'  :handle="elem"/></re-computing>
+                    <re-error :stuff="stuff" :error='elem.data' :warning='elem.warning' v-if='elem.type == "error"'  :handle="elem"/></re-error>
                     <re-problem :problem='elem.data' :stuff='stuff' v-if='elem.type == "problem"' :handle="elem"></re-problem>
                     <re-stuff :supstuff='stuff' :stuff='elem.data' v-if='elem.type == "sub"' :handle="elem"></re-stuff>
                 </div>
@@ -2026,7 +2188,7 @@ Vue.component('re-stuff', {
                 <div v-for="elem in this.stuff">
                     <re-performed-action :stuff="stuff" :action='elem.data' v-if='elem.type == "performed"'  :handle="elem"/></re-performed-action>
                     <re-computing :action='elem.data' v-if='elem.type == "computing"'  :handle="elem"/></re-computing>
-                    <re-error :stuff="stuff" :error='elem.data' v-if='elem.type == "error"'  :handle="elem"/></re-computing>
+                    <re-error :stuff="stuff" :error='elem.data' :warning='elem.warning' v-if='elem.type == "error"'  :handle="elem"/></re-error>
                     <re-problem :problem='elem.data' :stuff='stuff' v-if='elem.type == "problem"' :handle="elem"></re-problem>
                     <re-stuff :supstuff='stuff' :stuff='elem.data' v-if='elem.type == "sub"' :handle="elem"></re-stuff>
                 </div>
