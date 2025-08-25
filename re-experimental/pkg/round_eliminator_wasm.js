@@ -14,7 +14,7 @@ let wasm_bindgen;
     let cachedUint8Memory0 = null;
 
     function getUint8Memory0() {
-        if (cachedUint8Memory0 === null || cachedUint8Memory0.byteLength === 0) {
+        if (cachedUint8Memory0 === null || cachedUint8Memory0.buffer !== wasm.memory.buffer) {
             cachedUint8Memory0 = new Uint8Array(wasm.memory.buffer);
         }
         return cachedUint8Memory0;
@@ -22,7 +22,7 @@ let wasm_bindgen;
 
     function getStringFromWasm0(ptr, len) {
         ptr = ptr >>> 0;
-        return cachedTextDecoder.decode(getUint8Memory0().subarray(ptr, ptr + len));
+        return cachedTextDecoder.decode(getUint8Memory0().slice(ptr, ptr + len));
     }
 
     const heap = new Array(128).fill(undefined);
@@ -58,18 +58,14 @@ let WASM_VECTOR_LEN = 0;
 
 const cachedTextEncoder = (typeof TextEncoder !== 'undefined' ? new TextEncoder('utf-8') : { encode: () => { throw Error('TextEncoder not available') } } );
 
-const encodeString = (typeof cachedTextEncoder.encodeInto === 'function'
-    ? function (arg, view) {
-    return cachedTextEncoder.encodeInto(arg, view);
-}
-    : function (arg, view) {
+const encodeString = function (arg, view) {
     const buf = cachedTextEncoder.encode(arg);
     view.set(buf);
     return {
         read: arg.length,
         written: buf.length
     };
-});
+};
 
 function passStringToWasm0(arg, malloc, realloc) {
 
@@ -140,7 +136,7 @@ __exports.main = function() {
 let cachedInt32Memory0 = null;
 
 function getInt32Memory0() {
-    if (cachedInt32Memory0 === null || cachedInt32Memory0.byteLength === 0) {
+    if (cachedInt32Memory0 === null || cachedInt32Memory0.buffer !== wasm.memory.buffer) {
         cachedInt32Memory0 = new Int32Array(wasm.memory.buffer);
     }
     return cachedInt32Memory0;
@@ -354,7 +350,7 @@ function __wbg_get_imports() {
 }
 
 function __wbg_init_memory(imports, maybe_memory) {
-
+    imports.wbg.memory = maybe_memory || new WebAssembly.Memory({initial:20,maximum:16384,shared:true});
 }
 
 function __wbg_finalize_init(instance, module) {
@@ -367,12 +363,12 @@ function __wbg_finalize_init(instance, module) {
     return wasm;
 }
 
-function initSync(module) {
+function initSync(module, maybe_memory) {
     if (wasm !== undefined) return wasm;
 
     const imports = __wbg_get_imports();
 
-    __wbg_init_memory(imports);
+    __wbg_init_memory(imports, maybe_memory);
 
     if (!(module instanceof WebAssembly.Module)) {
         module = new WebAssembly.Module(module);
@@ -383,7 +379,7 @@ function initSync(module) {
     return __wbg_finalize_init(instance, module);
 }
 
-async function __wbg_init(input) {
+async function __wbg_init(input, maybe_memory) {
     if (wasm !== undefined) return wasm;
 
     if (typeof input === 'undefined' && typeof script_src !== 'undefined') {
@@ -395,7 +391,7 @@ async function __wbg_init(input) {
         input = fetch(input);
     }
 
-    __wbg_init_memory(imports);
+    __wbg_init_memory(imports, maybe_memory);
 
     const { instance, module } = await __wbg_load(await input, imports);
 
